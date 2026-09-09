@@ -24,7 +24,7 @@ def test_greet_endpoint_functional_flow():
     assert res.status_code == 200
     assert res.json()["message"] == "Hello, Alice!"
 
-
+### rien de ouf quoi ;)
 def test_greet_endpoint_error_case():
     res = requests.get(f"{BASE_URL}/api/greet/%20", timeout=10)
     assert res.status_code == 400
