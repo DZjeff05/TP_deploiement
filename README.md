@@ -18,4 +18,4 @@ Automatique à chaque `git push origin main`. Aucune action manuelle requise.
 - **GitHub Secrets** : aucun identifiant en clair (token Docker Hub, clé SSH, IP VM).
 
 ## Accès à l'application
-http://20.56.74.49:2005
+http://16.171.181.231:8080
