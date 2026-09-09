@@ -1,0 +1,141 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/myapp
+
+jobs:
+
+  # -------------------------
+  # JOB 1 : Tests unitaires
+  # -------------------------
+  unit-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt -r tests/requirements-test.txt
+
+      - name: Exécuter les tests unitaires
+        run: pytest tests/ -v
+
+  # -------------------------
+  # JOB 2 : Tests E2E
+  # -------------------------
+  e2e-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installer les dépendances de l'app
+        working-directory: ./app
+        run: pip install -r requirements.txt
+
+      - name: Démarrer l'application en arrière-plan
+        working-directory: ./app/src
+        run: |
+          nohup python app.py > app.log 2>&1 &
+          echo "App démarrée en arrière-plan"
+
+      - name: Attendre que l'app soit prête
+        run: |
+          for i in {1..15}; do
+            curl -sf http://localhost:8080/health && break
+            echo "En attente de l'app..."
+            sleep 2
+          done
+
+      - name: Installer les dépendances E2E
+        working-directory: ./e2e
+        run: pip install -r requirements.txt
+
+      - name: Exécuter les tests E2E
+        working-directory: ./e2e
+        env:
+          APP_BASE_URL: http://localhost:8080
+        run: pytest test_e2e.py -v
+
+  # -------------------------
+  # JOB 3 : Build & Push Docker Hub
+  # -------------------------
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: [unit-tests, e2e-tests]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & Push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  # -------------------------
+  # JOB 4 : Déploiement Azure VM
+  # -------------------------
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copier docker-compose.yml sur la VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.AZURE_VM_HOST }}
+          username: ${{ secrets.AZURE_VM_USER }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          source: "docker-compose.yml"
+          target: "DZJ/myapp-DZJ"
+
+      - name: Déployer via SSH (idempotent)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AZURE_VM_HOST }}
+          username: ${{ secrets.AZURE_VM_USER }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          script: |
+            export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+            cd ~/DZJ/myapp-DZJ
+            docker pull ${{ env.IMAGE_NAME }}:latest
+            docker compose up -d --remove-orphans
+            docker image prune -f
+
+      - name: Vérifier le déploiement (healthcheck HTTP)
+        run: |
+          for i in {1..10}; do
+            if curl -sf http://${{ secrets.AZURE_VM_HOST }}:2005/health; then
+              echo "✅ Application en ligne"
+              exit 0
+            fi
+            echo "En attente..."
+            sleep 3
+          done
+          echo "❌ L'application ne répond pas"
+          exit 1

@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>MyApp</title>
+</head>
+<body>
+  <h1>MyApp</h1>
+  <p id="status">Chargement...</p>
+  <script>
+    fetch('/health')
+      .then(r => r.json())
+      .then(d => document.getElementById('status').innerText = 'Statut : ' + d.status);
+  </script>
+</body>
+</html>
